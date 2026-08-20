@@ -43,6 +43,15 @@
 .lyrics-editor::placeholder { color: #aaa59c; }
 .autosave-state { display: flex; align-items: center; gap: 6px; color: #9b968d; font-size: 9px; }
 .autosave-state i { width: 6px; height: 6px; border-radius: 50%; background: #9fc63b; }
+.autosave-state.saving i { background: #d9a62f; animation: save-pulse .8s infinite alternate; }
+.autosave-state.error { color: #bf4549; }
+.autosave-state.error i { background: #bf4549; }
+.empty-workspace { min-height: 510px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.empty-workspace > svg { width: 42px; height: 42px; margin-bottom: 20px; padding: 10px; border-radius: 14px; color: #171716; background: var(--lime); }
+.empty-workspace h1 { max-width: 320px; margin: 0; font-size: 30px; line-height: 1.08; letter-spacing: -.05em; }
+.empty-workspace p { margin: 10px 0 22px; color: var(--muted); font-size: 12px; }
+.empty-workspace .primary { width: auto; }
+@keyframes save-pulse { to { opacity: .35; } }
 
 .mini-player { height: 78px; padding: 8px 12px 15px 9px; gap: 7px; }
 .mini-main { min-width: 0; flex: 1; padding: 0; display: flex; align-items: center; gap: 10px; border: 0; color: #fff; background: transparent; text-align: left; }
