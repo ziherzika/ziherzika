@@ -7,6 +7,14 @@
   gap: 9px;
 }
 
+.home-topbar { display: flex; align-items: center; justify-content: space-between; }
+.home-topbar h1 { margin: 0; font-size: 34px; letter-spacing: -.055em; }
+.home-topbar > div:last-child { display: flex; align-items: center; gap: 9px; }
+.track-topbar { display: grid; grid-template-columns: 42px minmax(0, 1fr) 42px; align-items: center; gap: 10px; }
+.track-title { min-width: 0; padding: 3px 5px; border: 0; background: transparent; text-align: center; }
+.track-title strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; letter-spacing: -.04em; }
+.track-topbar .back-button { border-color: #cec8be; background: #fff; box-shadow: 0 5px 14px #0000000d; }
+
 .track-picker {
   min-width: 0;
   padding: 0;
