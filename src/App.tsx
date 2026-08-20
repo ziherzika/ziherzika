@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowLeft, ChevronRight, Folder, Heart, Home, MessageCircle, MoreHorizontal,
+  ArrowLeft, ChevronRight, Folder, Home, MoreHorizontal,
   LogOut, Music2, Pause, Play, Plus, Search, Send, Settings, Users, X,
 } from "lucide-react";
 
@@ -28,6 +28,9 @@ function youtubeId(value:string) {
   try { const url=new URL(value); return url.hostname.includes("youtu.be") ? url.pathname.slice(1) : url.searchParams.get("v") || ""; } catch { return ""; }
 }
 
+function secondsFromDuration(value:string){const parts=value.split(":").map(Number);return parts.length===2&&parts.every(Number.isFinite)?parts[0]*60+parts[1]:0}
+function timeLabel(value:number){const safe=Math.max(0,Math.floor(value||0));return `${Math.floor(safe/60)}:${String(safe%60).padStart(2,"0")}`}
+
 function Cover({track, small=false}:{track:Track; small?:boolean}) {
   return <div className={`cover ${track.color} ${small?"small":""}`}><Music2 size={small?15:19}/></div>;
 }
@@ -36,18 +39,37 @@ function App() {
   const [signedIn,setSignedIn]=useState(()=>!import.meta.env.VITE_API_URL||Boolean(sessionStorage.getItem("ziherzika_token")));
   const [view,setView]=useState<"home"|"projects"|"project"|"search">("home");
   const [projectTab,setProjectTab]=useState<"tracks"|"chat">("tracks");
-  const [tracks,setTracks]=useState(initialTracks);
+  const [tracks,setTracks]=useState(()=>initialTracks.map(track=>({...track,notes:localStorage.getItem(`ziherzika_lyrics_${track.id}`)||track.notes})));
   const [messages,setMessages]=useState(starterMessages);
   const [message,setMessage]=useState("");
   const [query,setQuery]=useState("");
   const [newTrack,setNewTrack]=useState(false);
   const [selected,setSelected]=useState<Track|null>(initialTracks[0]);
-  const [playerOpen,setPlayerOpen]=useState(false);
   const [playing,setPlaying]=useState(false);
+  const [progress,setProgress]=useState(0);
+  const [duration,setDuration]=useState(()=>secondsFromDuration(initialTracks[0].duration));
   const [profileOpen,setProfileOpen]=useState(false);
   const [toast,setToast]=useState("");
   const [activeProjectId,setActiveProjectId]=useState<string|null>(()=>sessionStorage.getItem("ziherzika_project"));
+  const videoRef=useRef<HTMLIFrameElement|null>(null);
   const filtered=useMemo(()=>tracks.filter(t=>`${t.title} ${t.tags.join(" ")} ${t.bpm||""}`.toLowerCase().includes(query.toLowerCase())),[tracks,query]);
+
+  function playerCommand(func:string,args:unknown[]=[]){videoRef.current?.contentWindow?.postMessage(JSON.stringify({event:"command",func,args}),"*")}
+  function connectPlayer(){videoRef.current?.contentWindow?.postMessage(JSON.stringify({event:"listening",id:"ziherzika-player"}),"*");playerCommand("getDuration");playerCommand("getCurrentTime")}
+  function chooseTrack(track:Track){setSelected(track);setView("home");setProgress(0);setDuration(secondsFromDuration(track.duration));setPlaying(false)}
+  function togglePlayback(){if(playing)playerCommand("pauseVideo");else playerCommand("playVideo");setPlaying(value=>!value)}
+  function seekTo(value:number){setProgress(value);playerCommand("seekTo",[value,true])}
+  function updateLyrics(value:string){if(!selected)return;setSelected({...selected,notes:value});setTracks(items=>items.map(track=>track.id===selected.id?{...track,notes:value}:track));localStorage.setItem(`ziherzika_lyrics_${selected.id}`,value)}
+
+  useEffect(()=>{
+    function receivePlayerMessage(event:MessageEvent){
+      if(event.origin!=="https://www.youtube.com")return;
+      try{const data=typeof event.data==="string"?JSON.parse(event.data):event.data;const info=data?.info;if(typeof info?.currentTime==="number"&&info.currentTime>=0&&info.currentTime<86_400)setProgress(info.currentTime);if(typeof info?.duration==="number"&&info.duration>0&&info.duration<86_400)setDuration(info.duration);if(typeof info?.playerState==="number")setPlaying(info.playerState===1)}catch{/* ignore unrelated player messages */}
+    }
+    window.addEventListener("message",receivePlayerMessage);
+    const timer=window.setInterval(()=>{playerCommand("getCurrentTime");playerCommand("getDuration");playerCommand("getPlayerState")},600);
+    return()=>{window.removeEventListener("message",receivePlayerMessage);window.clearInterval(timer)};
+  },[]);
 
   function flash(text:string){setToast(text);window.setTimeout(()=>setToast(""),2200)}
   function openProject(){setView("project");setProjectTab("tracks")}
@@ -66,14 +88,13 @@ function App() {
   if(!signedIn)return <AuthScreen onDone={async(token)=>{sessionStorage.setItem("ziherzika_token",token);try{const response=await fetch(`${API_URL}/api/projects`,{headers:{Authorization:`Bearer ${token}`}});const data=await response.json() as {projects?:{id:string}[]};if(data.projects?.[0]){sessionStorage.setItem("ziherzika_project",data.projects[0].id);setActiveProjectId(data.projects[0].id)}}catch{/* project can load later */}setSignedIn(true)}} onDemo={()=>setSignedIn(true)}/>;
 
   return <div className="stage"><main className="app-shell">
-    {view==="home"&&<>
-      <header className="topbar"><div><p className="eyebrow">Ziherzika · Dobro jutro, Bruno</p><h1>Tvoje trake</h1></div><button className="avatar" onClick={()=>setProfileOpen(true)}>B</button></header>
-      <button className="searchbox" onClick={()=>setView("search")}><Search size={18}/>Pretraži trake i projekte</button>
-      <button className="project-hero" onClick={openProject}>
-        <div className="project-label">AKTIVNI PROJEKT <MoreHorizontal size={17}/></div><div className="record-art"><i/></div>
-        <div className="project-copy"><span>ZAJEDNIČKI FOLDER</span><h2>Ljetni EP</h2><p>8 traka · 3 člana</p><div className="people"><i>BK</i><i>LV</i><i>MJ</i><b>12</b><small>novih poruka</small></div></div><em><ChevronRight/></em>
-      </button>
-      <TrackList title="Nedavno" tracks={filtered.slice(0,4)} onSelect={t=>{setSelected(t);setPlayerOpen(true)}} />
+    {view==="home"&&selected&&<>
+      <header className="notes-topbar"><button className="track-picker" onClick={()=>setView("search")}><span><p className="eyebrow">TEKST PJESME</p><strong>{selected.title}</strong></span><ChevronRight/></button><button className="icon-btn" onClick={()=>setNewTrack(true)} aria-label="Dodaj traku"><Plus/></button><button className="avatar" onClick={()=>setProfileOpen(true)}>B</button></header>
+      <section className="notes-workspace">
+        <div className="notes-meta"><div><p>{selected.channel}</p><div className="chips">{selected.bpm&&<span>{selected.bpm} BPM</span>}{selected.musicalKey&&<span>{selected.musicalKey}</span>}{selected.tags.map(tag=><span key={tag}>#{tag}</span>)}</div></div><div className="video-peek"><iframe id="ziherzika-player" ref={videoRef} onLoad={()=>window.setTimeout(connectPlayer,500)} src={`https://www.youtube.com/embed/${selected.youtubeId}?enablejsapi=1&playsinline=1&rel=0&origin=${encodeURIComponent(window.location.origin)}`} title={`${selected.title} video`} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen/></div></div>
+        <textarea className="lyrics-editor" value={selected.notes} onChange={event=>updateLyrics(event.target.value)} spellCheck placeholder="Počni pisati tekst pjesme…" aria-label="Tekst pjesme"/>
+        <div className="autosave-state"><i/> Automatski spremljeno</div>
+      </section>
     </>}
     {view==="projects"&&<>
       <PageHeader title="Projekti" onBack={()=>setView("home")} action={<button className="icon-btn" onClick={()=>flash("Novi projekt — uskoro") }><Plus/></button>}/>
@@ -84,15 +105,14 @@ function App() {
       <PageHeader title="Ljetni EP" onBack={()=>setView("home")} action={<button className="icon-btn"><Users/></button>}/>
       <div className="project-summary"><div className="folder-art orchid"><Folder/></div><div><strong>3 člana</strong><span>Privatni projekt</span></div><button onClick={()=>flash("Pozivni link je kopiran")}>Pozovi</button></div>
       <div className="tabs"><button className={projectTab==="tracks"?"active":""} onClick={()=>setProjectTab("tracks")}>Trake <b>{tracks.length}</b></button><button className={projectTab==="chat"?"active":""} onClick={()=>setProjectTab("chat")}>Chat <b>12</b></button></div>
-      {projectTab==="tracks"?<TrackList title="Sve trake" tracks={tracks} onSelect={t=>{setSelected(t);setPlayerOpen(true)}}/>:<section className="chat"><div className="messages">{messages.map(m=><article className={m.mine?"message mine":"message"} key={m.id}>{!m.mine&&<i>{m.initials}</i>}<div><small>{m.author} · {m.time}</small><p>{m.text}</p></div></article>)}</div><form className="composer" onSubmit={e=>{e.preventDefault();addMessage()}}><button type="button"><Plus/></button><input value={message} onChange={e=>setMessage(e.target.value)} placeholder="Napiši poruku…"/><button className="send"><Send/></button></form></section>}
+      {projectTab==="tracks"?<TrackList title="Sve trake" tracks={tracks} onSelect={chooseTrack}/>:<section className="chat"><div className="messages">{messages.map(m=><article className={m.mine?"message mine":"message"} key={m.id}>{!m.mine&&<i>{m.initials}</i>}<div><small>{m.author} · {m.time}</small><p>{m.text}</p></div></article>)}</div><form className="composer" onSubmit={e=>{e.preventDefault();addMessage()}}><button type="button"><Plus/></button><input value={message} onChange={e=>setMessage(e.target.value)} placeholder="Napiši poruku…"/><button className="send"><Send/></button></form></section>}
     </>}
-    {view==="search"&&<><PageHeader title="Pretraži" onBack={()=>setView("home")}/><label className="search-input"><Search/><input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Naslov, tag, BPM…"/>{query&&<button onClick={()=>setQuery("")}><X/></button>}</label><TrackList title={query?`${filtered.length} rezultata`:"Sve trake"} tracks={filtered} onSelect={t=>{setSelected(t);setPlayerOpen(true)}}/></>}
-    <button className="fab" onClick={()=>setNewTrack(true)} aria-label="Dodaj traku"><Plus/></button>
-    {selected&&<button className="mini-player" onClick={()=>setPlayerOpen(true)}><Cover track={selected} small/><span><strong>{selected.title}</strong><small>{selected.channel}</small></span><i onClick={e=>{e.stopPropagation();setPlaying(!playing)}}>{playing?<Pause fill="currentColor"/>:<Play fill="currentColor"/>}</i><em><b style={{width:playing?"58%":"18%"}}/></em></button>}
+    {view==="search"&&<><PageHeader title="Odaberi traku" onBack={()=>setView("home")} action={<button className="icon-btn" onClick={()=>setNewTrack(true)}><Plus/></button>}/><label className="search-input"><Search/><input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Naslov, tag, BPM…"/>{query&&<button onClick={()=>setQuery("")}><X/></button>}</label><TrackList title={query?`${filtered.length} rezultata`:"Sve trake"} tracks={filtered} onSelect={chooseTrack}/></>}
+    {view!=="home"&&<button className="fab" onClick={()=>setNewTrack(true)} aria-label="Dodaj traku"><Plus/></button>}
+    {selected&&<div className="mini-player"><button className="mini-main" onClick={()=>setView("home")}><Cover track={selected} small/><span><strong>{selected.title}</strong><small>{timeLabel(progress)} / {timeLabel(duration)}</small></span></button><button className="play-toggle" onClick={togglePlayback} aria-label={playing?"Pauziraj":"Pokreni"}>{playing?<Pause fill="currentColor"/>:<Play fill="currentColor"/>}</button><label className="player-progress" aria-label="Premotavanje"><input type="range" min="0" max={Math.max(duration,1)} step="0.1" value={Math.min(progress,Math.max(duration,1))} onChange={event=>seekTo(Number(event.target.value))}/></label></div>}
     <nav className="bottom-nav"><NavButton active={view==="home"} icon={<Home/>} label="Početna" onClick={()=>setView("home")}/><NavButton active={view==="projects"||view==="project"} icon={<Folder/>} label="Projekti" onClick={()=>setView("projects")}/><NavButton active={view==="search"} icon={<Search/>} label="Pretraži" onClick={()=>setView("search")}/></nav>
   </main>
-  {newTrack&&<Modal title="Nova traka" onClose={()=>setNewTrack(false)}><form className="track-form" onSubmit={e=>{e.preventDefault();saveTrack(e.currentTarget)}}><label>YouTube link<input name="url" type="url" required placeholder="https://youtube.com/watch?v=…"/></label><label>Naziv<input name="title" required placeholder="Naziv beata"/></label><div className="form-row"><label>BPM <span>opcionalno</span><input name="bpm" type="number" min="20" max="300" placeholder="140"/></label><label>Key <span>opcionalno</span><input name="key" placeholder="F# minor"/></label></div><label>Tagovi<input name="tags" placeholder="trap, dark, demo"/></label><label>Bilješke<textarea name="notes" rows={4} placeholder="Ideja za refren, struktura, tekst…"/></label><button className="primary">Spremi traku</button></form></Modal>}
-  {playerOpen&&selected&&<Modal title={selected.title} onClose={()=>setPlayerOpen(false)} full><div className="video"><iframe src={`https://www.youtube.com/embed/${selected.youtubeId}?playsinline=1`} title={selected.title} allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowFullScreen/></div><div className="track-detail"><div className="detail-head"><div><p>{selected.channel}</p><h2>{selected.title}</h2></div><button onClick={()=>setTracks(v=>v.map(t=>t.id===selected.id?{...t,favorite:!t.favorite}:t))}><Heart fill={selected.favorite?"currentColor":"none"}/></button></div><div className="chips">{selected.bpm&&<span>{selected.bpm} BPM</span>}{selected.musicalKey&&<span>{selected.musicalKey}</span>}{selected.tags.map(x=><span key={x}>#{x}</span>)}</div><section className="notes"><small>BILJEŠKE</small><p>{selected.notes||"Nema bilješki."}</p></section><button className="primary" onClick={()=>{setPlayerOpen(false);openProject();setProjectTab("chat");flash("Traka je podijeljena u chat")}}><MessageCircle/> Podijeli u chat</button></div></Modal>}
+  {newTrack&&<Modal title="Nova traka" onClose={()=>setNewTrack(false)}><form className="track-form" onSubmit={e=>{e.preventDefault();saveTrack(e.currentTarget)}}><label>YouTube link<input name="url" type="url" required placeholder="https://youtube.com/watch?v=…"/></label><label>Naziv<input name="title" required placeholder="Naziv beata"/></label><div className="form-row"><label>BPM <span>opcionalno</span><input name="bpm" type="number" min="20" max="300" placeholder="140"/></label><label>Key <span>opcionalno</span><input name="key" placeholder="F# minor"/></label></div><label>Tagovi<input name="tags" placeholder="trap, dark, demo"/></label><label>Početni tekst <span>opcionalno</span><textarea name="notes" rows={4} placeholder="Počni pisati tekst pjesme…"/></label><button className="primary">Spremi traku</button></form></Modal>}
   {profileOpen&&<Modal title="Profil" onClose={()=>setProfileOpen(false)}><div className="profile"><div className="big-avatar">B</div><h2>Bruno</h2><p>bruno@ziherzika.app</p><button><Settings/> Postavke <ChevronRight/></button><button onClick={()=>flash("Demo način rada")}><Users/> Demo račun <ChevronRight/></button><button onClick={()=>{sessionStorage.removeItem("ziherzika_token");sessionStorage.removeItem("ziherzika_project");setSignedIn(false);setProfileOpen(false)}}><LogOut/> Odjavi se <ChevronRight/></button></div></Modal>}
   {toast&&<div className="toast">{toast}</div>}
   </div>
