@@ -1,0 +1,22 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "ziherzika-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "vars": {
+    "ALLOWED_ORIGINS": "https://ziherzika.github.io,http://localhost:3000,http://localhost:5173",
+    "ENVIRONMENT": "production"
+  },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "ziherzika-db",
+    "database_id": "875a372d-9dc7-4198-b98a-ceb24d8968c6",
+    "migrations_dir": "migrations"
+  }],
+  "durable_objects": {
+    "bindings": [{ "name": "CHAT_ROOMS", "class_name": "ChatRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChatRoom"] }]
+}

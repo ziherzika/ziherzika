@@ -1,0 +1,9 @@
+{
+  "name": "Ziherzika — Trake i projekti",
+  "short_name": "Ziherzika",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f1eb",
+  "theme_color": "#f4f1eb",
+  "icons": [{ "src": "./favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
