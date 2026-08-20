@@ -76,4 +76,7 @@
 
 @media (max-height: 720px) { .lyrics-editor { min-height: 300px; } }
 @media (max-width: 380px) { .video-peek { width: 112px; flex-basis: 112px; } .track-picker strong { font-size: 19px; } }
-@media (min-width: 700px) { .bottom-nav, .mini-player { position: fixed; } }
+@media (min-width: 700px) {
+  .bottom-nav, .mini-player, .fab { position: fixed; }
+  .fab { right: max(22px, calc((100vw - 520px) / 2 + 22px)); }
+}
