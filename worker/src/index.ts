@@ -97,9 +97,7 @@ async function register(request:Request,env:Env):Promise<Response>{
   if(!/^\S+@\S+\.\S+$/.test(email)||displayName.length<2||password.length<8) return json({error:"Provjeri ime, email i lozinku (najmanje 8 znakova)."},400);
   const exists=await env.DB.prepare("SELECT id FROM users WHERE email=?").bind(email).first();if(exists)return json({error:"Račun s tim emailom već postoji."},409);
   const id=crypto.randomUUID(),salt=randomToken(16),hash=await hashPassword(password,salt),now=Date.now();
-  await env.DB.batch([env.DB.prepare("INSERT INTO users(id,email,display_name,password_hash,password_salt,created_at) VALUES(?,?,?,?,?,?)").bind(id,email,displayName,hash,salt,now),env.DB.prepare("INSERT INTO projects(id,name,owner_id,created_at) VALUES(?,?,?,?)").bind(crypto.randomUUID(),"Moj prvi projekt",id,now)]);
-  const project=await env.DB.prepare("SELECT id FROM projects WHERE owner_id=? ORDER BY created_at DESC LIMIT 1").bind(id).first<{id:string}>();
-  if(project)await env.DB.prepare("INSERT INTO project_members(project_id,user_id,role,joined_at) VALUES(?,?,?,?)").bind(project.id,id,"owner",now).run();
+  await env.DB.prepare("INSERT INTO users(id,email,display_name,password_hash,password_salt,created_at) VALUES(?,?,?,?,?,?)").bind(id,email,displayName,hash,salt,now).run();
   return issueSession({id,email,display_name:displayName},env,201);
 }
 
