@@ -14,6 +14,7 @@
 .track-title { min-width: 0; padding: 3px 5px; border: 0; background: transparent; text-align: center; }
 .track-title strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; letter-spacing: -.04em; }
 .track-topbar .back-button { border-color: #cec8be; background: #fff; box-shadow: 0 5px 14px #0000000d; }
+.danger-icon { color: #c23c43; border-color: #e8c9ca; background: #fff8f8; }
 
 .track-picker {
   min-width: 0;
