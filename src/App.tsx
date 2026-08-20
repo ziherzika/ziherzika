@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 
 type Track = { id:string; title:string; channel:string; youtubeId:string; bpm?:number; musicalKey?:string; notes:string; tags:string[]; duration:string; color:string; favorite?:boolean };
+type ApiTrack = { id:string; youtube_id:string; title:string; channel:string|null; bpm:number|null; musical_key:string|null; notes:string; tags_json:string; is_favorite:number };
 type ChatMessage = { id:string; author:string; initials:string; text:string; time:string; mine?:boolean; track?:Track };
 type Project = { id:string; name:string; subtitle:string; members:number; unread:number; color:string };
 
@@ -30,6 +31,7 @@ function youtubeId(value:string) {
 
 function secondsFromDuration(value:string){const parts=value.split(":").map(Number);return parts.length===2&&parts.every(Number.isFinite)?parts[0]*60+parts[1]:0}
 function timeLabel(value:number){const safe=Math.max(0,Math.floor(value||0));return `${Math.floor(safe/60)}:${String(safe%60).padStart(2,"0")}`}
+function trackFromApi(track:ApiTrack,index:number):Track{let tags:string[]=[];try{const parsed=JSON.parse(track.tags_json);if(Array.isArray(parsed))tags=parsed.filter((tag):tag is string=>typeof tag==="string")}catch{/* invalid legacy tags become empty */}return{id:track.id,title:track.title,channel:track.channel||"YouTube",youtubeId:track.youtube_id,bpm:track.bpm||undefined,musicalKey:track.musical_key||undefined,notes:track.notes||"",tags,duration:"—",color:["violet","rose","amber","lime"][index%4],favorite:Boolean(track.is_favorite)}}
 
 function Cover({track, small=false}:{track:Track; small?:boolean}) {
   return <div className={`cover ${track.color} ${small?"small":""}`}><Music2 size={small?15:19}/></div>;
@@ -39,19 +41,23 @@ function App() {
   const [signedIn,setSignedIn]=useState(()=>!import.meta.env.VITE_API_URL||Boolean(sessionStorage.getItem("ziherzika_token")));
   const [view,setView]=useState<"home"|"projects"|"project"|"search">("home");
   const [projectTab,setProjectTab]=useState<"tracks"|"chat">("tracks");
-  const [tracks,setTracks]=useState(()=>initialTracks.map(track=>({...track,notes:localStorage.getItem(`ziherzika_lyrics_${track.id}`)||track.notes})));
+  const productionApi=Boolean(import.meta.env.VITE_API_URL);
+  const [tracks,setTracks]=useState(()=>productionApi?[]:initialTracks.map(track=>({...track,notes:localStorage.getItem(`ziherzika_lyrics_${track.id}`)||track.notes})));
   const [messages,setMessages]=useState(starterMessages);
   const [message,setMessage]=useState("");
   const [query,setQuery]=useState("");
   const [newTrack,setNewTrack]=useState(false);
-  const [selected,setSelected]=useState<Track|null>(initialTracks[0]);
+  const [selected,setSelected]=useState<Track|null>(()=>productionApi?null:initialTracks[0]);
   const [playing,setPlaying]=useState(false);
   const [progress,setProgress]=useState(0);
   const [duration,setDuration]=useState(()=>secondsFromDuration(initialTracks[0].duration));
   const [profileOpen,setProfileOpen]=useState(false);
   const [toast,setToast]=useState("");
+  const [workspaceLoading,setWorkspaceLoading]=useState(()=>Boolean(sessionStorage.getItem("ziherzika_token")));
+  const [saveState,setSaveState]=useState<"saved"|"saving"|"error">("saved");
   const [activeProjectId,setActiveProjectId]=useState<string|null>(()=>sessionStorage.getItem("ziherzika_project"));
   const videoRef=useRef<HTMLIFrameElement|null>(null);
+  const saveTimer=useRef<number|null>(null);
   const filtered=useMemo(()=>tracks.filter(t=>`${t.title} ${t.tags.join(" ")} ${t.bpm||""}`.toLowerCase().includes(query.toLowerCase())),[tracks,query]);
 
   function playerCommand(func:string,args:unknown[]=[]){videoRef.current?.contentWindow?.postMessage(JSON.stringify({event:"command",func,args}),"*")}
@@ -59,7 +65,8 @@ function App() {
   function chooseTrack(track:Track){setSelected(track);setView("home");setProgress(0);setDuration(secondsFromDuration(track.duration));setPlaying(false)}
   function togglePlayback(){if(playing)playerCommand("pauseVideo");else playerCommand("playVideo");setPlaying(value=>!value)}
   function seekTo(value:number){setProgress(value);playerCommand("seekTo",[value,true])}
-  function updateLyrics(value:string){if(!selected)return;setSelected({...selected,notes:value});setTracks(items=>items.map(track=>track.id===selected.id?{...track,notes:value}:track));localStorage.setItem(`ziherzika_lyrics_${selected.id}`,value)}
+  async function loadWorkspace(token:string){setWorkspaceLoading(true);try{const projectsResponse=await fetch(`${API_URL}/api/projects`,{headers:{Authorization:`Bearer ${token}`}});if(!projectsResponse.ok)throw new Error("Projekti se ne mogu učitati.");const projectsData=await projectsResponse.json() as {projects?:{id:string}[]};const projectId=projectsData.projects?.[0]?.id;if(!projectId){setTracks([]);setSelected(null);return}sessionStorage.setItem("ziherzika_project",projectId);setActiveProjectId(projectId);const tracksResponse=await fetch(`${API_URL}/api/projects/${projectId}/tracks`,{headers:{Authorization:`Bearer ${token}`}});if(!tracksResponse.ok)throw new Error("Trake se ne mogu učitati.");const tracksData=await tracksResponse.json() as {tracks?:ApiTrack[]};const storedTracks=(tracksData.tracks||[]).map(trackFromApi);setTracks(storedTracks);setSelected(storedTracks[0]||null)}catch(error){flash(error instanceof Error?error.message:"Podaci se ne mogu učitati.")}finally{setWorkspaceLoading(false)}}
+  function updateLyrics(value:string){if(!selected)return;const trackId=selected.id;setSelected({...selected,notes:value});setTracks(items=>items.map(track=>track.id===trackId?{...track,notes:value}:track));localStorage.setItem(`ziherzika_lyrics_${trackId}`,value);const token=sessionStorage.getItem("ziherzika_token");if(!token||!activeProjectId)return;setSaveState("saving");if(saveTimer.current!==null)window.clearTimeout(saveTimer.current);saveTimer.current=window.setTimeout(()=>{void(async()=>{try{const response=await fetch(`${API_URL}/api/projects/${activeProjectId}/tracks/${trackId}`,{method:"PATCH",headers:{"content-type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({notes:value})});if(!response.ok)throw new Error();setSaveState("saved")}catch{setSaveState("error")}})()},650)}
 
   useEffect(()=>{
     function receivePlayerMessage(event:MessageEvent){
@@ -71,6 +78,8 @@ function App() {
     return()=>{window.removeEventListener("message",receivePlayerMessage);window.clearInterval(timer)};
   },[]);
 
+  useEffect(()=>{const token=sessionStorage.getItem("ziherzika_token");if(token)void loadWorkspace(token);return()=>{if(saveTimer.current!==null)window.clearTimeout(saveTimer.current)}},[]);
+
   function flash(text:string){setToast(text);window.setTimeout(()=>setToast(""),2200)}
   function openProject(){setView("project");setProjectTab("tracks")}
   function addMessage(){if(!message.trim())return;setMessages(v=>[...v,{id:crypto.randomUUID(),author:"Ti",initials:"BK",text:message.trim(),time:new Date().toLocaleTimeString("hr-HR",{hour:"2-digit",minute:"2-digit"}),mine:true}]);setMessage("")}
@@ -79,21 +88,22 @@ function App() {
     if(!id){flash("Unesi ispravan YouTube link");return}
     let title=String(data.get("title")||"").trim(),channel="YouTube";
     if(!title){try{const response=await fetch(`${API_URL}/api/youtube/metadata?url=${encodeURIComponent(String(data.get("url")))}`);if(response.ok){const meta=await response.json() as {title:string;channel:string};title=meta.title;channel=meta.channel}}catch{/* keep fallback */}}
-    const track:Track={id:crypto.randomUUID(),title:(title||"Nova traka").toUpperCase(),channel,youtubeId:id,bpm:Number(data.get("bpm"))||undefined,musicalKey:String(data.get("key")||"")||undefined,notes:String(data.get("notes")||""),tags:String(data.get("tags")||"").split(",").map(x=>x.trim()).filter(Boolean),duration:"—",color:"lime"};
+    let track:Track={id:crypto.randomUUID(),title:(title||"Nova traka").toUpperCase(),channel,youtubeId:id,bpm:Number(data.get("bpm"))||undefined,musicalKey:String(data.get("key")||"")||undefined,notes:String(data.get("notes")||""),tags:String(data.get("tags")||"").split(",").map(x=>x.trim()).filter(Boolean),duration:"—",color:"lime"};
     const token=sessionStorage.getItem("ziherzika_token");
-    if(token&&activeProjectId){try{const response=await fetch(`${API_URL}/api/projects/${activeProjectId}/tracks`,{method:"POST",headers:{"content-type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({youtubeUrl:data.get("url"),title:track.title,channel:track.channel,bpm:track.bpm,musicalKey:track.musicalKey,notes:track.notes,tags:track.tags})});if(!response.ok)throw new Error()}catch{flash("Spremljeno lokalno; server trenutno nije dostupan")}}
-    setTracks(v=>[track,...v]);setSelected(track);setNewTrack(false);flash("Traka je spremljena")
+    if(token&&activeProjectId){try{const response=await fetch(`${API_URL}/api/projects/${activeProjectId}/tracks`,{method:"POST",headers:{"content-type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({youtubeUrl:data.get("url"),title:track.title,channel:track.channel,bpm:track.bpm,musicalKey:track.musicalKey,notes:track.notes,tags:track.tags})});const body=await response.json() as {track?:{id:string};error?:string};if(!response.ok||!body.track?.id)throw new Error(body.error||"Spremanje nije uspjelo.");track={...track,id:body.track.id}}catch(error){flash(error instanceof Error?error.message:"Spremanje nije uspjelo.");return}}
+    setTracks(v=>[track,...v]);setSelected(track);setView("home");setNewTrack(false);flash("Traka je spremljena u bazu")
   }
 
-  if(!signedIn)return <AuthScreen onDone={async(token)=>{sessionStorage.setItem("ziherzika_token",token);try{const response=await fetch(`${API_URL}/api/projects`,{headers:{Authorization:`Bearer ${token}`}});const data=await response.json() as {projects?:{id:string}[]};if(data.projects?.[0]){sessionStorage.setItem("ziherzika_project",data.projects[0].id);setActiveProjectId(data.projects[0].id)}}catch{/* project can load later */}setSignedIn(true)}} onDemo={()=>setSignedIn(true)}/>;
+  if(!signedIn)return <AuthScreen onDone={async(token)=>{sessionStorage.setItem("ziherzika_token",token);await loadWorkspace(token);setSignedIn(true)}} onDemo={()=>{setTracks(initialTracks);setSelected(initialTracks[0]);setSignedIn(true)}}/>;
 
   return <div className="stage"><main className="app-shell">
+    {view==="home"&&!selected&&<><header className="notes-topbar"><div><p className="eyebrow">ZIHERZIKA</p><strong>Tvoje trake</strong></div><button className="icon-btn" onClick={()=>setNewTrack(true)} aria-label="Dodaj traku"><Plus/></button><button className="avatar" onClick={()=>setProfileOpen(true)}>B</button></header><section className="empty-workspace"><Music2/><h1>{workspaceLoading?"Učitavam trake…":"Još nemaš nijednu traku."}</h1>{!workspaceLoading&&<><p>Zalijepi prvi YouTube beat i kreni pisati.</p><button className="primary" onClick={()=>setNewTrack(true)}><Plus/> Nova traka</button></>}</section></>}
     {view==="home"&&selected&&<>
       <header className="notes-topbar"><button className="track-picker" onClick={()=>setView("search")}><span><p className="eyebrow">TEKST PJESME</p><strong>{selected.title}</strong></span><ChevronRight/></button><button className="icon-btn" onClick={()=>setNewTrack(true)} aria-label="Dodaj traku"><Plus/></button><button className="avatar" onClick={()=>setProfileOpen(true)}>B</button></header>
       <section className="notes-workspace">
         <div className="notes-meta"><div><p>{selected.channel}</p><div className="chips">{selected.bpm&&<span>{selected.bpm} BPM</span>}{selected.musicalKey&&<span>{selected.musicalKey}</span>}{selected.tags.map(tag=><span key={tag}>#{tag}</span>)}</div></div><div className="video-peek"><iframe id="ziherzika-player" ref={videoRef} onLoad={()=>window.setTimeout(connectPlayer,500)} src={`https://www.youtube.com/embed/${selected.youtubeId}?enablejsapi=1&playsinline=1&rel=0&origin=${encodeURIComponent(window.location.origin)}`} title={`${selected.title} video`} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen/></div></div>
         <textarea className="lyrics-editor" value={selected.notes} onChange={event=>updateLyrics(event.target.value)} spellCheck placeholder="Počni pisati tekst pjesme…" aria-label="Tekst pjesme"/>
-        <div className="autosave-state"><i/> Automatski spremljeno</div>
+        <div className={`autosave-state ${saveState}`}><i/> {saveState==="saving"?"Spremam u bazu…":saveState==="error"?"Spremanje nije uspjelo":"Spremljeno u bazu"}</div>
       </section>
     </>}
     {view==="projects"&&<>
